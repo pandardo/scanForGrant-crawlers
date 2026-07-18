@@ -154,5 +154,33 @@ class Fetcher:
 
         return response
 
+    def post(self, url: str, **kwargs) -> httpx.Response | None:
+        """POST for JSON-API sources (§6.2 `api`). Returns None on failure.
+
+        Same politeness as get(): robots.txt is honoured and the per-domain rate
+        limit applies. A query API is still someone else's server.
+        """
+        parsed = urlparse(url)
+
+        if not self.allowed(url):
+            log.info("robots.txt disallows %s", url)
+            return None
+
+        self._wait_for_domain(parsed.netloc)
+
+        try:
+            response = self._client.post(url, **kwargs)
+        except httpx.HTTPError as exc:
+            log.warning("POST failed for %s: %s", url, exc)
+            return None
+
+        self.pages_fetched += 1
+
+        if response.status_code != 200:
+            log.warning("POST returned %s for %s", response.status_code, url)
+            return None
+
+        return response
+
     def close(self) -> None:
         self._client.close()

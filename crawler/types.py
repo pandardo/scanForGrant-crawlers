@@ -12,7 +12,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Candidate:
-    """A URL that might be a grant detail page."""
+    """A URL that might be a grant detail page.
+
+    `payload` carries structured data the discovery step already has (JSON-API
+    sources). When present the pipeline extracts from it instead of fetching the
+    detail page — essential for portals whose detail pages are behind a cookie
+    wall, where a fetch returns nothing usable.
+    """
 
     url: str
     title: str | None = None
+    payload: dict | None = None

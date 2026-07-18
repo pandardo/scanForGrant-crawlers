@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from .adapters import build_adapter
-from .clean import clean_html
+from .clean import CleanedPage, clean_html
 from .dedup import find_duplicate
 from .db import Database
 from .extract import NotAGrant, extract_grant
@@ -160,6 +160,51 @@ def scan_source(
     return result
 
 
+def _payload_as_page(candidate) -> CleanedPage:
+    """Render an API row as text for Stage B.
+
+    Flattened to readable "key: value" lines rather than raw JSON: the extraction
+    prompt is written for prose, and the model handles labelled fields far more
+    reliably than nested objects.
+    """
+    import json as _json
+
+    payload = candidate.payload or {}
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+
+    lines: list[str] = []
+    if candidate.title:
+        lines.append(f"Title: {candidate.title}")
+
+    # Only fields that carry grant meaning; skip the search engine's bookkeeping.
+    interesting = (
+        "callTitle", "description", "destinationDetails", "budget",
+        "deadlineDate", "closingDate", "deadlineModel", "duration",
+        "programmeDivision", "typesOfAction", "callccm2Id",
+    )
+    for key in interesting:
+        value = metadata.get(key)
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if value in (None, "", []):
+            continue
+        lines.append(f"{key}: {value}")
+
+    summary = payload.get("summary")
+    if summary:
+        lines.append(f"Summary: {summary}")
+    lines.append(f"URL: {candidate.url}")
+
+    text = "\n".join(str(line) for line in lines)
+    raw = _json.dumps(payload, default=str)
+    return CleanedPage(
+        text=text,
+        original_bytes=len(raw.encode("utf-8", errors="ignore")),
+        text_length=len(text),
+        truncated=False,
+    )
+
+
 def _process_candidate(
     candidate,
     *,
@@ -174,12 +219,19 @@ def _process_candidate(
     dedup_pool: list[dict] | None = None,
 ) -> str | None:
     """Returns 'new', 'updated', or None when skipped."""
-    response = fetcher.get(candidate.url)
-    if response is None:
-        result.log_lines.append(f"could not fetch {candidate.url}")
-        return None
+    if candidate.payload is not None:
+        # JSON-API source: the discovery response already carries the grant's
+        # fields, so skip the detail fetch. The EU portal's detail pages sit
+        # behind the same cookie wall as its listing and yield zero text — a
+        # fetch there costs a request and returns nothing extractable.
+        cleaned = _payload_as_page(candidate)
+    else:
+        response = fetcher.get(candidate.url)
+        if response is None:
+            result.log_lines.append(f"could not fetch {candidate.url}")
+            return None
+        cleaned = clean_html(response.text)
 
-    cleaned = clean_html(response.text)
     page_hash = content_hash(cleaned.text)
 
     # 3. DIFF. An unchanged page costs no LLM call — this is the check the whole

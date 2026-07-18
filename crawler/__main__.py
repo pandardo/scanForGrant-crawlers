@@ -83,9 +83,23 @@ def main(argv: list[str] | None = None) -> int:
             " [dry-run]" if args.dry_run else "",
         )
 
+        # Share the run budget across sources so one paginated site cannot spend
+        # it all. A generous share (3x the even split) still lets a rich source
+        # use more than its neighbours, while guaranteeing the tail gets a turn.
+        per_source_budget = None
+        if len(sources) > 1:
+            even_split = config.llm_max_calls_per_run // len(sources)
+            per_source_budget = max(10, even_split * 3)
+            log.info(
+                "per-source LLM budget: %d call(s) of %d total",
+                per_source_budget,
+                config.llm_max_calls_per_run,
+            )
+
         results = []
         for source in sources:
             log.info("→ %s", source["label"])
+            llm.begin_source(per_source_budget)
             result = scan_source(
                 source,
                 db=db,

@@ -117,9 +117,25 @@ class HtmlAdapter:
                 diagnostics=diagnostics,
             )
 
+        # Say WHY, precisely. "Every rung was exhausted" reads as "this site has
+        # no grants", but the commonest cause on a large run is that the per-run
+        # LLM budget ran out before Stage A could even be attempted — the source
+        # was never actually tried. Reporting those identically sends you
+        # debugging a site that is probably fine.
+        stage_a = diagnostics.get("stage_a") or {}
+        if isinstance(stage_a, dict) and stage_a.get("skipped"):
+            error = (
+                f"not attempted: {stage_a['skipped']}. "
+                "Raise LLM_MAX_CALLS_PER_RUN or scan this source on its own."
+            )
+        elif not diagnostics.get("ladder_rungs_tried"):
+            error = "no candidates found: no selector to try and Stage A was unavailable"
+        else:
+            error = "no candidates found: every ladder rung was tried and gated out"
+
         return DiscoveryResult(
             fingerprint=result.fingerprint,
             failed_strategy_ids=result.failed_strategy_ids,
             diagnostics=diagnostics,
-            error="no candidates found: every ladder rung was exhausted or gated out",
+            error=error,
         )

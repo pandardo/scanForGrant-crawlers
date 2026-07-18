@@ -38,10 +38,29 @@ class LLMClient:
         self._config = config
         self._client = client or httpx.Client(timeout=config.request_timeout_seconds)
         self.calls_made = 0
+        # Optional per-source ceiling. Without it, one paginated source can spend
+        # the entire run budget and every later source is skipped with no calls
+        # left — seen live when one comune consumed 149 of 200 calls across 188
+        # pages, starving eleven other councils.
+        self._source_budget: int | None = None
+        self._source_calls_at_start = 0
+
+    def begin_source(self, budget: int | None) -> None:
+        """Start a per-source allowance. None means 'only the run cap applies'."""
+        self._source_budget = budget
+        self._source_calls_at_start = self.calls_made
+
+    @property
+    def source_calls_made(self) -> int:
+        return self.calls_made - self._source_calls_at_start
 
     @property
     def calls_remaining(self) -> int:
-        return max(0, self._config.llm_max_calls_per_run - self.calls_made)
+        run_left = max(0, self._config.llm_max_calls_per_run - self.calls_made)
+        if self._source_budget is None:
+            return run_left
+        source_left = max(0, self._source_budget - self.source_calls_made)
+        return min(run_left, source_left)
 
     def complete_json(
         self,
@@ -57,6 +76,15 @@ class LLMClient:
         transport, HTTP, or JSON-parse failure.
         """
         if self.calls_remaining == 0:
+            if (
+                self._source_budget is not None
+                and self.source_calls_made >= self._source_budget
+                and self.calls_made < self._config.llm_max_calls_per_run
+            ):
+                raise CallCapExceeded(
+                    f"per-source LLM call cap reached ({self._source_budget}); "
+                    "other sources still have budget"
+                )
             raise CallCapExceeded(
                 f"per-run LLM call cap reached ({self._config.llm_max_calls_per_run})"
             )

@@ -213,3 +213,53 @@ def test_stage_a_prompt_satisfies_json_mode():
 
     prompt_text = " ".join(m["content"] for m in captured[0]["messages"]).lower()
     assert "json" in prompt_text, "stage A would 400 against DeepSeek"
+
+
+class TestPerSourceBudget:
+    """One paginated source must not spend the whole run's budget.
+
+    Seen live: a comune consumed 149 of 200 calls across 188 pages, and the
+    eleven councils after it were skipped with 0 calls — then reported as
+    'no candidates found', which reads as 'this site has no grants' rather than
+    'we never tried'.
+    """
+
+    def test_source_budget_caps_a_greedy_source(self):
+        llm = llm_returning(*[VALID_GRANT] * 10, config=make_config(max_calls=100))
+        llm.begin_source(3)
+
+        for _ in range(3):
+            extract_grant(llm, url="https://e.it/b", cleaned=PAGE, topics=[])
+
+        with pytest.raises(CallCapExceeded, match="per-source"):
+            extract_grant(llm, url="https://e.it/b", cleaned=PAGE, topics=[])
+
+    def test_the_next_source_gets_a_fresh_allowance(self):
+        """The whole point: exhausting one source must not starve the next."""
+        llm = llm_returning(*[VALID_GRANT] * 10, config=make_config(max_calls=100))
+
+        llm.begin_source(2)
+        extract_grant(llm, url="https://e.it/a", cleaned=PAGE, topics=[])
+        extract_grant(llm, url="https://e.it/a", cleaned=PAGE, topics=[])
+        assert llm.calls_remaining == 0, "first source is spent"
+
+        llm.begin_source(2)
+        assert llm.calls_remaining == 2, "second source starts fresh"
+        extract_grant(llm, url="https://e.it/b", cleaned=PAGE, topics=[])
+        assert llm.source_calls_made == 1
+
+    def test_the_run_cap_still_wins_over_a_generous_source_budget(self):
+        llm = llm_returning(*[VALID_GRANT] * 10, config=make_config(max_calls=2))
+        llm.begin_source(50)  # more than the run allows
+
+        extract_grant(llm, url="https://e.it/b", cleaned=PAGE, topics=[])
+        extract_grant(llm, url="https://e.it/b", cleaned=PAGE, topics=[])
+
+        with pytest.raises(CallCapExceeded, match="per-run"):
+            extract_grant(llm, url="https://e.it/b", cleaned=PAGE, topics=[])
+
+    def test_no_source_budget_means_only_the_run_cap_applies(self):
+        """Single-source runs (--source <id>) should use the full budget."""
+        llm = llm_returning(*[VALID_GRANT] * 10, config=make_config(max_calls=5))
+        llm.begin_source(None)
+        assert llm.calls_remaining == 5

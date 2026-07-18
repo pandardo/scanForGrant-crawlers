@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .api import ApiAdapter
 from .base import Adapter, Candidate, DiscoveryResult
 from .html import HtmlAdapter
 from .html_js import HtmlJsAdapter
@@ -9,13 +10,14 @@ from .rss import RssAdapter
 
 ADAPTERS: dict[str, type] = {
     "rss": RssAdapter,
+    "api": ApiAdapter,
     "html": HtmlAdapter,
     "html_js": HtmlJsAdapter,
 }
 
 
 def adapter_for(source_type: str) -> type:
-    """`api` is not built yet; an unknown type falls back to plain html."""
+    """An unknown type falls back to plain html."""
     return ADAPTERS.get(source_type, HtmlAdapter)
 
 
@@ -28,7 +30,9 @@ def build_adapter(source: dict, *, fetcher, strategies=None, llm=None, renderer=
     source_type = source.get("type", "html")
     adapter_class = adapter_for(source_type)
 
-    if adapter_class is RssAdapter:
+    # rss and api need none of the ladder machinery: their responses are already
+    # structured, so there is no selector to infer and no LLM call to spend (§6.2).
+    if adapter_class in (RssAdapter, ApiAdapter):
         return adapter_class(fetcher)
 
     if adapter_class is HtmlJsAdapter:
@@ -39,6 +43,7 @@ def build_adapter(source: dict, *, fetcher, strategies=None, llm=None, renderer=
 
 __all__ = [
     "Adapter",
+    "ApiAdapter",
     "Candidate",
     "DiscoveryResult",
     "HtmlAdapter",
