@@ -1,0 +1,31 @@
+[project]
+name = "scan-for-grants-crawler"
+version = "0.1.0"
+description = "Monitors Italian public portals for new grants and extracts them into Supabase."
+requires-python = ">=3.12"
+
+dependencies = [
+  "httpx>=0.27",           # HTTP client for list/detail fetches and the LLM API
+  "selectolax>=0.3.21",    # fast CSS-selector HTML parsing (ARCHITECTURE.md §3)
+  "feedparser>=6.0",       # RSS/Atom parsing for the `rss` adapter
+  "supabase>=2.7",         # Supabase client; writes with the service-role key
+  "pydantic>=2.8",         # schema validation of LLM extraction output (§6.3)
+  "playwright>=1.45",      # headless Chromium for JS-rendered portals (§6.2 html_js)
+  "rapidfuzz>=3.9",        # fuzzy title match for cross-portal soft dedup (§6.3)
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-httpx>=0.30",    # stubs httpx at the transport layer, so no live calls in tests
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["crawler*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

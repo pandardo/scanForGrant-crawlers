@@ -1,0 +1,66 @@
+name: scan
+
+on:
+  # Fires hourly; the job asks app_settings.scan_frequency whether to proceed
+  # (§6.7). That way changing the frequency in Settings takes effect immediately,
+  # with no workflow edit and no redeploy.
+  schedule:
+    - cron: "5 * * * *"
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: "Scan only this source id (blank = all active sources)"
+        required: false
+        type: string
+      dry_run:
+        description: "Extract and log, but write nothing"
+        required: false
+        type: boolean
+        default: false
+
+# Read-only: this job needs no write access to its own repo.
+permissions:
+  contents: read
+
+concurrency:
+  # One scan at a time; a queued run would only refetch the same pages.
+  group: scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Install Chromium
+        # Only the browser, and only its deps: the full `--with-deps` install
+        # pulls far more than a headless scrape needs.
+        run: python -m playwright install --with-deps chromium
+
+      - name: Scan
+        env:
+          # Secrets are not exposed to workflows triggered from forked PRs, and
+          # this workflow only runs on schedule/dispatch from the default branch (§2).
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'https://api.deepseek.com/v1' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'deepseek-chat' }}
+          LLM_MAX_CALLS_PER_RUN: ${{ vars.LLM_MAX_CALLS_PER_RUN || '200' }}
+        run: |
+          python -m crawler \
+            --trigger ${{ github.event_name == 'schedule' && 'cron' || 'manual' }} \
+            ${{ github.event_name == 'schedule' && '--respect-frequency' || '' }} \
+            ${{ inputs.source_id && format('--source {0}', inputs.source_id) || '' }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }}

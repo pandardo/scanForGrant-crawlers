@@ -1,0 +1,30 @@
+name: keepalive
+
+# GitHub suspends scheduled workflows after 60 days of repository inactivity —
+# scans would then stop silently, which is the worst kind of failure (§6.7, §9).
+# A monthly commit keeps the repo "active".
+#
+# The daily crawler writes cover the other half of the problem: Supabase pauses a
+# free project after 7 days idle.
+on:
+  schedule:
+    - cron: "0 3 1 * *" # 03:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: write # the one workflow that needs it: it pushes the heartbeat
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Touch the heartbeat
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "chore: keepalive heartbeat" || exit 0
+          git push
