@@ -49,6 +49,27 @@ class Database:
             or []
         )
 
+    def last_successful_scan_at(self) -> "datetime | None":
+        """When the last ok run-summary finished — drives frequency gating (§6.7).
+
+        The run-level summary row has source_id NULL; a per-source row would
+        double-count. Gating on this makes the schedule survive cron drift.
+        """
+        rows = (
+            self._client.table("scan_runs")
+            .select("finished_at")
+            .is_("source_id", "null")
+            .eq("status", "ok")
+            .order("finished_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not rows or not rows[0].get("finished_at"):
+            return None
+        return datetime.fromisoformat(rows[0]["finished_at"].replace("Z", "+00:00"))
+
     def settings(self) -> dict[str, Any]:
         return (
             self._client.table("app_settings").select("*").eq("id", 1).single().execute().data

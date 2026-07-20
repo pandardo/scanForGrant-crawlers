@@ -49,12 +49,21 @@ class HtmlAdapter:
             return None, f"could not fetch list page: {url}"
         return response.text, None
 
+    # A real grant list is short — a handful to a few dozen. Hundreds of
+    # candidates means the "list" is an albo pretorio or news archive, where each
+    # page costs a DeepSeek call to reject as a non-grant. Seen live: Quartu's
+    # albo paginated to 241 candidates across 246 pages, burning the whole
+    # per-source budget on legal notices. Cap discovery well below that; anything
+    # beyond is almost certainly not a grant.
+    MAX_CANDIDATES_PER_SOURCE = 60
+
     def _paginate(self, *, first_html, first_url, selector, seed):
-        """Apply a working selector across every page of the list.
+        """Apply a working selector across the list's pages, up to a candidate cap.
 
         seed is page 1's already-gated candidates. Each further page is fetched,
-        its candidates extracted with the same selector and gated, then merged and
-        de-duplicated by URL. Bounded by MAX_PAGES via page_urls().
+        its candidates extracted with the same selector and gated, merged and
+        de-duplicated. Stops at MAX_PAGES (page_urls) or MAX_CANDIDATES_PER_SOURCE,
+        whichever comes first — and says so, never a silent truncation (§6).
         """
         from ..gate import extract_candidates, validate_candidates
         from ..paginate import page_urls
@@ -67,8 +76,12 @@ class HtmlAdapter:
 
         seen = {c.url for c in seed}
         candidates = list(seed)
+        truncated = False
 
         for page_url in urls[1:]:  # page 1 is the seed
+            if len(candidates) >= self.MAX_CANDIDATES_PER_SOURCE:
+                truncated = True
+                break
             html, _ = self._get_html(page_url)
             if html is None:
                 continue
@@ -79,7 +92,20 @@ class HtmlAdapter:
                     seen.add(c.url)
                     candidates.append(c)
 
-        return candidates, {"pages_scanned": len(urls), "candidates_after_pagination": len(candidates)}
+        if truncated or len(candidates) > self.MAX_CANDIDATES_PER_SOURCE:
+            candidates = candidates[: self.MAX_CANDIDATES_PER_SOURCE]
+            log.warning(
+                "%s: capped at %d candidates — the list is unusually large, likely "
+                "an albo pretorio rather than a grant listing",
+                first_url,
+                self.MAX_CANDIDATES_PER_SOURCE,
+            )
+
+        return candidates, {
+            "pages_scanned": len(urls),
+            "candidates_after_pagination": len(candidates),
+            "candidates_capped": truncated,
+        }
 
     def discover(self, source: dict) -> DiscoveryResult:
         url = source.get("list_url") or source["url"]

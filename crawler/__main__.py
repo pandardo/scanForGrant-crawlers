@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="exit unless app_settings.scan_frequency says this hour should scan (§6.7)",
     )
+    parser.add_argument(
+        "--draft-adapter",
+        action="store_true",
+        help="Track 2 (§6.4): draft an extraction rule for --source and open a PR. "
+             "Does not scan. Needs GITHUB_PR_TOKEN + GITHUB_CRAWLER_REPO.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
 
@@ -56,13 +62,21 @@ def main(argv: list[str] | None = None) -> int:
     renderer = Renderer(config)
     started_at = datetime.now(timezone.utc)
 
+    if args.draft_adapter:
+        try:
+            return _draft_adapter(args, db=db, fetcher=fetcher, llm=llm, renderer=renderer)
+        finally:
+            fetcher.close()
+            llm.close()
+            renderer.close()
+
     try:
         # Frequency gating (§6.7). The workflow fires hourly and this decides
         # whether to proceed, so changing the setting in the UI takes effect
         # without editing the cron.
         if args.respect_frequency:
             frequency = db.settings().get("scan_frequency", "daily")
-            run_now, reason = should_run(frequency)
+            run_now, reason = should_run(frequency, last_scan_at=db.last_successful_scan_at())
             log.info("%s", reason)
             if not run_now:
                 return 0
@@ -159,6 +173,83 @@ def main(argv: list[str] | None = None) -> int:
         fetcher.close()
         llm.close()
         renderer.close()
+
+
+def _draft_adapter(args, *, db, fetcher, llm, renderer) -> int:
+    """Track 2 (§6.4): draft an extraction rule for one source, open a PR.
+
+    The rule is validated inert data. Nothing runs until a human merges the PR
+    and applies the rule — this command only proposes.
+    """
+    import os
+
+    from .draft import draft_rule
+    from .github_pr import GitHubPR, PRError
+    from .render import RenderError
+
+    if not args.source:
+        log.error("--draft-adapter needs --source <id>")
+        return 2
+
+    sources = db.active_sources(args.source)
+    if not sources:
+        log.error("no such source: %s", args.source)
+        return 2
+    source = sources[0]
+    url = source.get("list_url") or source["url"]
+    log.info("drafting an extraction rule for %s", source["label"])
+
+    # Fetch the page the way a human debugging it would: render if plain fetch is
+    # thin, since the hard sources are usually JS-rendered.
+    html = None
+    response = fetcher.get(url)
+    if response is not None:
+        html = response.text
+    from .clean import clean_html
+
+    if not html or clean_html(html).text_length < 500:
+        try:
+            html = renderer.render(url)
+            log.info("used a rendered page (plain fetch was too thin)")
+        except RenderError:
+            if not html:
+                log.error("could not fetch or render %s", url)
+                return 1
+
+    result = draft_rule(llm, url=url, html=html)
+    if not result.ok:
+        log.info("no usable rule drafted: %s", result.reasoning)
+        return 1
+
+    rule_json = result.rule.model_dump(exclude_none=True, mode="json")
+    log.info("drafted rule: %s", rule_json)
+
+    token = os.environ.get("GITHUB_PR_TOKEN")
+    repo = os.environ.get("GITHUB_CRAWLER_REPO")
+    if not token or not repo:
+        # No PR credentials: still succeed by printing the rule for manual use.
+        log.info("GITHUB_PR_TOKEN/GITHUB_CRAWLER_REPO not set — printing rule instead of opening a PR")
+        print(_json_dumps(rule_json))
+        return 0
+
+    try:
+        pr_url = GitHubPR(token=token, repo=repo).open_rule_pr(
+            source_id=source["id"],
+            source_label=source["label"],
+            rule=rule_json,
+            note=result.reasoning,
+        )
+        log.info("opened PR: %s", pr_url)
+        return 0
+    except PRError as exc:
+        log.error("could not open PR: %s", exc)
+        return 1
+
+
+def _json_dumps(obj) -> str:
+    import json as _json
+
+    return _json.dumps(obj, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":

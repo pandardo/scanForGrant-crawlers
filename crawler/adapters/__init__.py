@@ -7,12 +7,14 @@ from .base import Adapter, Candidate, DiscoveryResult
 from .html import HtmlAdapter
 from .html_js import HtmlJsAdapter
 from .rss import RssAdapter
+from .rule import RuleAdapter
 
 ADAPTERS: dict[str, type] = {
     "rss": RssAdapter,
     "api": ApiAdapter,
     "html": HtmlAdapter,
     "html_js": HtmlJsAdapter,
+    "rule": RuleAdapter,
 }
 
 
@@ -38,6 +40,9 @@ def build_adapter(source: dict, *, fetcher, strategies=None, llm=None, renderer=
     if adapter_class is HtmlJsAdapter:
         return adapter_class(fetcher, strategies=strategies, llm=llm, renderer=renderer)
 
+    if adapter_class is RuleAdapter:
+        return adapter_class(fetcher, renderer=renderer)
+
     return adapter_class(fetcher, strategies=strategies, llm=llm)
 
 
@@ -49,6 +54,7 @@ __all__ = [
     "HtmlAdapter",
     "HtmlJsAdapter",
     "RssAdapter",
+    "RuleAdapter",
     "adapter_for",
     "build_adapter",
     "ADAPTERS",

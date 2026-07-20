@@ -105,3 +105,43 @@ class TestDocumentLinks:
     def test_a_real_next_page_is_still_followed(self):
         html = page("/index.php?xsl=376&p=1", text="avanti »")
         assert find_next_page(html, BASE) is not None
+
+
+class TestCandidateCap:
+    """A grant list is short. Hundreds of candidates means an albo pretorio, where
+    each page costs a DeepSeek call to reject as a non-grant — seen live when
+    Quartu paginated to 241 candidates and burned its whole per-source budget."""
+
+    def test_pagination_stops_at_the_candidate_cap(self):
+        from crawler.adapters.html import HtmlAdapter
+        import httpx
+        from tests.test_extract import make_config
+
+        # every page yields 20 fresh candidates and always links to a next page
+        def item_page(n):
+            items = "".join(
+                f'<li class="b"><a href="/g/{n}-{i}">Bando {n}-{i}</a></li>' for i in range(20)
+            )
+            return f'<html><body><ul>{items}</ul><a href="/list?p={n+1}">avanti »</a></body></html>'
+
+        pages = {f"https://x.it/list?p={n}": item_page(n) for n in range(1, 30)}
+        pages["https://x.it/list"] = item_page(0)
+
+        def handler(request):
+            u = str(request.url)
+            if u.endswith("/robots.txt"):
+                return httpx.Response(404)
+            return httpx.Response(200, text=pages.get(u, "<html></html>"))
+
+        cfg = make_config()
+        object.__setattr__(cfg, "request_delay_seconds", 0.0)
+        from crawler.fetch import Fetcher
+
+        adapter = HtmlAdapter(Fetcher(cfg, client=httpx.Client(transport=httpx.MockTransport(handler))))
+        seed = []  # page 1 handled inside
+        first_html = item_page(0)
+        candidates, diag = adapter._paginate(
+            first_html=first_html, first_url="https://x.it/list", selector="li.b", seed=[]
+        )
+        assert len(candidates) <= HtmlAdapter.MAX_CANDIDATES_PER_SOURCE
+        assert diag["candidates_capped"] is True
