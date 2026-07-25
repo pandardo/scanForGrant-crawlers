@@ -112,6 +112,23 @@ prefix. Cohesion was added after Stage A proposed a selector on Regione Sardegna
 that matched 18 real bandi *and* 20 department pages; every stray was on-domain
 with a plausible path, so every other check passed them.
 
+### Auto-draft on persistent error (§6.4 Track 2)
+
+`sources.consecutive_errors` counts errored scans in a row (reset on the first
+ok). When a `html`/`html_js` source hits `AUTODRAFT_AFTER_ERRORS` (default 3,
+`0` disables), the run drafts an extraction rule (`crawler/draft.py`) and opens
+a PR via `crawler/github_pr.py` — the same flow as the manual
+`--draft-adapter`, triggered by the streak instead of a human.
+
+It fires exactly **at** the threshold, not above it, so a week-long outage
+produces one PR, not one per hourly scan; the stable per-source branch means a
+re-draft updates the same PR anyway. The safety story is unchanged: the draft
+is inert data validated against `rules.py`, the PR is **never** auto-merged,
+and a human applies the merged rule to `sources.extraction_rules`. Needs the
+`GH_PR_TOKEN` secret (fine-grained PAT, Contents + Pull requests on this repo
+only) — the workflow's own token stays `contents: read`. Without it the streak
+is still tracked and drafting just logs.
+
 ### Diagnostics (§6.5)
 
 A zero-candidate run records to `scan_runs.diagnostics`: fetched bytes, cleaned

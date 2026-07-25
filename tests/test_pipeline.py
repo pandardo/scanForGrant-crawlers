@@ -36,6 +36,7 @@ class FakeDB:
         self.grants: list[dict] = []
         self.scan_runs: list[dict] = []
         self.source_status: list[dict] = []
+        self.consecutive_errors: dict[str, int] = {}
         self.cached_selectors: list[tuple[str, str]] = []
         self.strategies: list[dict] = []
         self.credited: list[str] = []
@@ -44,7 +45,12 @@ class FakeDB:
     def known_url_hashes(self, source_id): return self.known
     def page_snapshot(self, source_id, url_hash_): return self.snapshots.get((source_id, url_hash_))
     def save_snapshot(self, source_id, url_hash_, content_hash_): self.snapshots[(source_id, url_hash_)] = content_hash_
-    def update_source_status(self, source_id, *, status, error=None): self.source_status.append({"id": source_id, "status": status, "error": error})
+    def update_source_status(self, source_id, *, status, error=None):
+        # Mirrors db.py: +1 on error, reset on ok, new count returned (0024).
+        errors = (self.consecutive_errors.get(source_id, 0) + 1) if status == "error" else 0
+        self.consecutive_errors[source_id] = errors
+        self.source_status.append({"id": source_id, "status": status, "error": error})
+        return errors
     def record_scan_run(self, run): self.scan_runs.append(run)
     def cache_selector(self, source_id, selector): self.cached_selectors.append((source_id, selector))
     def remember_strategy(self, *, selector, fingerprint, origin="llm"): self.strategies.append({"selector": selector, "fingerprint": fingerprint, "origin": origin})
@@ -161,6 +167,26 @@ def test_unfetchable_list_page_marks_the_source_errored():
     assert result.status == "error"
     assert db.source_status[-1]["status"] == "error"
     assert llm.calls_made == 0, "a failed fetch must not spend LLM budget"
+
+
+def test_error_streak_is_counted_and_surfaced():
+    """0024: repeated errors accumulate; the result carries the streak so
+    __main__ can trigger an auto-draft (§6.4 Track 2)."""
+    db, llm = FakeDB(), make_llm()
+
+    for expected in (1, 2, 3):
+        result = scan_source(SOURCE, db=db, fetcher=make_fetcher({}), llm=llm, topics=[])
+        assert result.status == "error"
+        assert result.consecutive_errors == expected
+
+
+def test_ok_scan_resets_the_error_streak(pages):
+    db, llm = FakeDB(), make_llm()
+    scan_source(SOURCE, db=db, fetcher=make_fetcher({}), llm=llm, topics=[])
+    assert db.consecutive_errors["s1"] == 1
+
+    scan_source(SOURCE, db=db, fetcher=make_fetcher(pages), llm=make_llm(), topics=[])
+    assert db.consecutive_errors["s1"] == 0
 
 
 def test_zero_candidates_records_diagnostics(pages):

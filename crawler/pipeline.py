@@ -42,6 +42,9 @@ class SourceResult:
     error: str | None = None
     diagnostics: dict = field(default_factory=dict)
     log_lines: list[str] = field(default_factory=list)
+    # Scans in a row this source has errored (0024) — 0 when ok or dry-run.
+    # __main__ compares it to the auto-draft threshold (§6.4 Track 2).
+    consecutive_errors: int = 0
 
 
 def scan_source(
@@ -75,7 +78,9 @@ def scan_source(
         result.error = discovery.error
         result.pages_fetched = fetcher.pages_fetched - pages_before
         if not dry_run:
-            db.update_source_status(source["id"], status="error", error=discovery.error)
+            result.consecutive_errors = db.update_source_status(
+                source["id"], status="error", error=discovery.error
+            )
         return result
 
     if not discovery.candidates:

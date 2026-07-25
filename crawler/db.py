@@ -160,15 +160,35 @@ class Database:
 
     def update_source_status(
         self, source_id: str, *, status: str, error: str | None = None
-    ) -> None:
+    ) -> int:
+        """Record the scan outcome on the source row.
+
+        Maintains `consecutive_errors` (0024): +1 on error, reset on ok. Returns
+        the new count so the caller can decide whether a persistent break has
+        crossed the auto-draft threshold (§6.4 Track 2).
+        """
+        errors = 0
+        if status == "error":
+            rows = (
+                self._client.table("sources")
+                .select("consecutive_errors")
+                .eq("id", source_id)
+                .execute()
+                .data
+                or []
+            )
+            errors = (rows[0].get("consecutive_errors") or 0) + 1 if rows else 1
+
         self._client.table("sources").update(
             {
                 "last_scan_at": _now(),
                 "last_status": status,
                 # Errors can quote fetched content; scrub before storing.
                 "last_error": scrub(error)[:1000] if error else None,
+                "consecutive_errors": errors,
             }
         ).eq("id", source_id).execute()
+        return errors
 
     def record_scan_run(self, run: dict[str, Any]) -> None:
         if run.get("log"):

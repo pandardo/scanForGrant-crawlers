@@ -142,6 +142,14 @@ def main(argv: list[str] | None = None) -> int:
         total_new = sum(r.new_count for r in results)
         errors = [r for r in results if r.status == "error"]
 
+        # Auto-draft (§6.4 Track 2): a source that has errored N scans in a row
+        # is not coming back on its own — draft a rule and open a PR for review.
+        # After the loop, so a slow draft can never eat another source's scan.
+        if not args.dry_run and errors:
+            _autodraft_persistent_errors(
+                errors, sources=sources, fetcher=fetcher, llm=llm, renderer=renderer
+            )
+
         # The run-level summary row: source_id NULL (§5).
         if not args.dry_run:
             db.record_scan_run(
@@ -175,6 +183,36 @@ def main(argv: list[str] | None = None) -> int:
         renderer.close()
 
 
+def _autodraft_persistent_errors(errors, *, sources, fetcher, llm, renderer) -> None:
+    """Auto-draft rules for sources whose error streak just hit the threshold.
+
+    Runs after the scan loop so a slow draft never delays a scan; failures are
+    logged and swallowed — a broken draft must not error the run that found it.
+    """
+    from .autodraft import draft_and_open_pr, should_autodraft, threshold_from_env
+
+    threshold = threshold_from_env()
+    by_id = {s["id"]: s for s in sources}
+    for result in errors:
+        source = by_id.get(result.source_id)
+        if not source:
+            continue
+        if not should_autodraft(source, result.consecutive_errors, threshold):
+            continue
+        log.info(
+            "auto-draft: %s has errored %d scan(s) in a row — drafting a rule (§6.4)",
+            result.label,
+            result.consecutive_errors,
+        )
+        draft_and_open_pr(
+            source,
+            fetcher=fetcher,
+            llm=llm,
+            renderer=renderer,
+            consecutive_errors=result.consecutive_errors,
+        )
+
+
 def _draft_adapter(args, *, db, fetcher, llm, renderer) -> int:
     """Track 2 (§6.4): draft an extraction rule for one source, open a PR.
 
@@ -183,6 +221,7 @@ def _draft_adapter(args, *, db, fetcher, llm, renderer) -> int:
     """
     import os
 
+    from .clean import clean_html
     from .draft import draft_rule
     from .github_pr import GitHubPR, PRError
     from .render import RenderError
@@ -205,7 +244,6 @@ def _draft_adapter(args, *, db, fetcher, llm, renderer) -> int:
     response = fetcher.get(url)
     if response is not None:
         html = response.text
-    from .clean import clean_html
 
     if not html or clean_html(html).text_length < 500:
         try:
