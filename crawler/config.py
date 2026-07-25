@@ -43,7 +43,7 @@ class Config:
             supabase_url=_require("SUPABASE_URL"),
             supabase_service_key=_require("SUPABASE_SERVICE_ROLE_KEY"),
             llm_base_url=os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1").strip(),
-            llm_model=os.environ.get("LLM_MODEL", "deepseek-chat").strip(),
+            llm_model=os.environ.get("LLM_MODEL", "deepseek-v4-flash").strip(),
             # DEEPSEEK_API_KEY is the documented name; LLM_API_KEY works too, so
             # swapping providers does not mean renaming a secret.
             llm_api_key=os.environ.get("LLM_API_KEY", "").strip()
