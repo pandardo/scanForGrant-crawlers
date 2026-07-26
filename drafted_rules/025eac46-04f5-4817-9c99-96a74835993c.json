@@ -1,0 +1,17 @@
+{
+  "source_id": "025eac46-04f5-4817-9c99-96a74835993c",
+  "label": "Comune di Olbia",
+  "note": "[auto-draft after 3 consecutive errors] Each grant/atto is a panel with class 'panel panel-primary'; pagination uses .prevLink for next page.",
+  "rule": {
+    "item_selector": ".panel.panel-primary",
+    "link_selector": ".dettaglio-doc",
+    "title_selector": ".titolo-albo",
+    "next_page_selector": ".prevLink",
+    "max_pages": 5,
+    "render": false,
+    "request": {
+      "method": "GET"
+    },
+    "note": "Each grant/atto is a panel with class 'panel panel-primary'; pagination uses .prevLink for next page."
+  }
+}
