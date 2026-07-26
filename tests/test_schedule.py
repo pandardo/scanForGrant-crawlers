@@ -1,9 +1,11 @@
-"""Frequency gating (§6.7), drift-proof.
+"""Frequency gating (§6.7), drift-proof AND anchored.
 
-The bug this guards against: GitHub cron drift can skip a whole hour, and a gate
-that demands the clock be exactly 06:00 then never runs the daily scan that day.
-Gating on time-since-last-scan survives that — a missed hour means "an hour late",
-never "not at all".
+Two bugs this guards against. GitHub cron drift can skip a whole hour, and a
+gate that demands the clock be exactly 06:00 then never runs the daily scan that
+day. And a pure time-since-last-scan gate lets the scan time creep ever later —
+one midday manual run and every following daily scan lands at midday. Window
+anchoring fixes both: the first tick in an unscanned window runs, and the next
+window re-anchors at its intended start regardless of when the last scan was.
 """
 
 from __future__ import annotations
@@ -57,6 +59,19 @@ class TestDaily:
     def test_before_6am_but_over_a_day_still_waits_for_morning(self):
         run, _ = should_run("daily", now=rome(5, 30, day=21), last_scan_at=rome(6, day=19))
         assert run is False
+
+    def test_reanchors_to_morning_after_a_midday_manual_run(self):
+        """THE drift bug: a manual run at 12:20 must not push the next daily
+        scan to midday forever. The 06:05 tick the next morning is a new
+        window, so it runs — under the old 23h-gap rule it skipped until 12+."""
+        run, reason = should_run("daily", now=rome(6, 5, day=21), last_scan_at=rome(12, 20, day=20))
+        assert run is True, reason
+
+    def test_manual_run_before_the_window_does_not_count_for_it(self):
+        """A 03:00 manual scan belongs to yesterday's window; the morning tick
+        still runs today's scan."""
+        run, _ = should_run("daily", now=rome(6, 5, day=20), last_scan_at=rome(3, day=20))
+        assert run is True
 
 
 class TestSixHourly:
