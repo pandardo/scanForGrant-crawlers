@@ -18,7 +18,7 @@ from .llm import LLMClient, LLMError
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You find the CSS selector for a list of grant ("bandi") links on an Italian public-sector page.
+SYSTEM_PROMPT = """You find the CSS selector for a list of grant links on a public-sector page (Italian "bandi", UK grant finders, EU calls — any language).
 
 Return ONLY:
 {"list_selector": "css selector or null", "reasoning": "one short sentence"}
@@ -56,8 +56,32 @@ def _condense_html(html: str, max_chars: int = 18_000) -> str:
 
     Stage A needs to see tags and classes, not paragraphs. Stripping text keeps
     far more of the DOM inside the token budget than raw HTML would.
+
+    Aggressive on purpose. On the UK Find-a-grant listing the header, cookie
+    banner and a filter sidebar of dozens of checkboxes pushed the actual grant
+    list past the truncation point, so Stage A truthfully answered "no list
+    here" and the source could never be scanned. A selector can only use tags,
+    classes, ids and hrefs, so form chrome and every other attribute are dead
+    weight in the window: dropping them is what keeps the real list visible.
     """
-    condensed = re.sub(r"<(script|style|svg|noscript)[^>]*>.*?</\1>", "", html, flags=re.S | re.I)
+    condensed = re.sub(
+        r"<(script|style|svg|noscript|select)[^>]*>.*?</\1>", "", html, flags=re.S | re.I
+    )
+    condensed = re.sub(r"<head[^>]*>.*?</head>", "", condensed, flags=re.S | re.I)
+    # Form chrome: a grant list is never made of inputs or buttons.
+    condensed = re.sub(
+        r"<(input|option|button|label)[^>]*>(?:.*?</\1>)?", "", condensed, flags=re.S | re.I
+    )
+
+    # Keep only the attributes a CSS selector could actually use.
+    def _slim_tag(match: re.Match) -> str:
+        tag, attrs = match.group(1), match.group(2)
+        kept = re.findall(r'\b(class|id|href)="([^"]*)"', attrs)
+        kept_str = (" " + " ".join(f'{k}="{v}"' for k, v in kept)) if kept else ""
+        return f"<{tag}{kept_str}>"
+
+    condensed = re.sub(r"<([a-zA-Z0-9]+)\s+([^>]*?)/?>", _slim_tag, condensed)
+
     # Collapse long text nodes; keep a stub so the shape stays readable.
     condensed = re.sub(r">([^<]{40,})<", lambda m: f">{m.group(1)[:40]}…<", condensed)
     condensed = re.sub(r"\s+", " ", condensed)

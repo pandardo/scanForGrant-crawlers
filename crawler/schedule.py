@@ -48,7 +48,7 @@ def should_run(
     six_hourly — at most once every 6 hours, not before 00/06/12/18 Rome
     daily      — at most once a day, not before 06:00 Rome
 
-    `last_scan_at` is when the last successful run finished (any tz; None if never
+    `last_scan_at` is when the last completed run finished (any tz; None if never
     scanned). Gating on the gap since then rather than on the exact clock hour is
     what makes this survive cron drift.
     """

@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         # without editing the cron.
         if args.respect_frequency:
             frequency = db.settings().get("scan_frequency", "daily")
-            run_now, reason = should_run(frequency, last_scan_at=db.last_successful_scan_at())
+            run_now, reason = should_run(frequency, last_scan_at=db.last_completed_scan_at())
             log.info("%s", reason)
             if not run_now:
                 return 0

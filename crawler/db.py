@@ -49,17 +49,20 @@ class Database:
             or []
         )
 
-    def last_successful_scan_at(self) -> "datetime | None":
-        """When the last ok run-summary finished — drives frequency gating (§6.7).
+    def last_completed_scan_at(self) -> "datetime | None":
+        """When the last run-summary finished — drives frequency gating (§6.7).
 
         The run-level summary row has source_id NULL; a per-source row would
-        double-count. Gating on this makes the schedule survive cron drift.
+        double-count. Any completed run counts, including status "error": a run
+        that finished with some sources failing still did the day's work, and
+        rerunning hourly cannot fix a broken source (auto-draft handles that,
+        §6.4) — it only burns the LLM budget. A run that crashes outright writes
+        no summary row, so it is retried on the next tick as before.
         """
         rows = (
             self._client.table("scan_runs")
             .select("finished_at")
             .is_("source_id", "null")
-            .eq("status", "ok")
             .order("finished_at", desc=True)
             .limit(1)
             .execute()
